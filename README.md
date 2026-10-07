@@ -169,10 +169,11 @@ Tested on a ZOWEE E3372-325 (firmware `3.0.2.61(H057SP5C983)`) on a Raspberry
 Pi 5 with `modemmanager 1.24.0-1+deb13u1`, NetworkManager 1.52.1, kernel
 6.18 (Raspberry Pi), SIM roaming on LTE:
 
-* Cold start: the stick boots in storage mode, usb_modeswitch switches it,
-  `option` binds the AT ports, the Huawei plugin takes the modem with the
-  right ports, and NetworkManager connects on its own (`ppp0` up about 45 s
-  after a firmware reboot with `AT^RESET`).
+* Cold start with the package installed: the stick boots in storage mode,
+  usb_modeswitch switches it, `option` binds the AT ports, the Huawei plugin
+  takes the modem with the right ports, and NetworkManager connects on its
+  own. `ppp0` was up 38 s after a host reboot and about 45 s after a firmware
+  reboot of the stick (`AT^RESET`).
 * With data checked after each step: 3 of 3 NetworkManager disconnect/reconnect
   cycles (about 2 s each), a ModemManager restart (data after about 30 s),
   `mmcli --disable`/`--enable`, and a re-attach that wiped the stick's
