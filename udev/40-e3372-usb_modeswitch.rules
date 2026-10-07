@@ -1,0 +1,6 @@
+# ZOWEE (Brovi) E3372-325: let usb_modeswitch switch it to modem mode.
+# usb-modeswitch-data doesn't know the stick yet; the switch configuration is
+# /etc/usb_modeswitch.d/3566:2001.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+  ATTR{idVendor}=="3566", ATTR{idProduct}=="2001", \
+  RUN+="usb_modeswitch '/%k'"

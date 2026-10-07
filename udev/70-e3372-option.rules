@@ -1,0 +1,7 @@
+# ZOWEE (Brovi) E3372-325: the kernel's option driver doesn't know the stick
+# yet. Without this, its vendor-class AT ports stay unbound in modem mode and
+# only the (unusable) NCM network interface comes up.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+  ATTR{idVendor}=="3566", ATTR{idProduct}=="2001", \
+  RUN+="/sbin/modprobe option", \
+  RUN+="/bin/sh -c '{ echo 3566 2001 ff > /sys/bus/usb-serial/drivers/option1/new_id; } 2>/dev/null || :'"

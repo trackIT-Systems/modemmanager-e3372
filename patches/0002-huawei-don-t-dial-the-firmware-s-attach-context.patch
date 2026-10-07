@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jonas=20H=C3=B6chst?= <hoechst@trackit.systems>
+Date: Wed, 7 Oct 2026 17:06:15 +0200
+Subject: [PATCH] huawei: don't dial the firmware's attach context
+
+The ZOWEE E3372-325 defines its own context for the LTE attach (cid 7)
+every time it boots or re-attaches, and wipes all contexts defined by the
+host. The profile manager reuses that context because its APN matches the
+requested one, but a PPP session on it never gets through IPCP right after
+the modem booted: the modem answers every IPCP Configure-Request twice
+(Configure-Reject and Configure-Nak) and the negotiation loops until
+NetworkManager gives up. Deactivating the context first isn't possible
+(+CGACT=0,7 fails with +CME ERROR: 100, it's the default bearer). Dialing
+any context defined by the host works, and the modem moves the default
+bearer onto it.
+
+Add a udev tag ID_MM_HUAWEI_ATTACH_PROFILE_ID with the profile id of such
+a firmware-managed context. The profile is hidden from the profile list,
+so the bearer always defines and dials its own context. As these modems
+report profile id 0 in +CGDCONT=? but reject defining it, the minimum
+profile id is raised to 1 for them.
+---
+ .../huawei/77-mm-huawei-net-port-types.rules  |  2 +
+ .../huawei/mm-broadband-modem-huawei.c        | 96 +++++++++++++++++++
+ 2 files changed, 98 insertions(+)
+
+diff --git a/src/plugins/huawei/77-mm-huawei-net-port-types.rules b/src/plugins/huawei/77-mm-huawei-net-port-types.rules
+index f9fef6b..ae0ab40 100644
+--- a/src/plugins/huawei/77-mm-huawei-net-port-types.rules
++++ b/src/plugins/huawei/77-mm-huawei-net-port-types.rules
+@@ -40,6 +40,8 @@ ATTRS{idVendor}=="12d1", ATTRS{idProduct}=="1003", ENV{ID_MM_PREFERRED_NETWORKS_
+ # ^GETPORTMODE is not supported, and the NCM port never reports a link, so data goes over PPP.
+ SUBSYSTEMS=="usb", ATTRS{bInterfaceNumber}=="?*", ENV{.MM_USBIFNUM}="$attr{bInterfaceNumber}"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{ID_MM_HUAWEI_DISABLE_GETPORTMODE}="1"
++# The firmware's own LTE attach context (cid 7) can't be used for PPP
++ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{ID_MM_HUAWEI_ATTACH_PROFILE_ID}="7"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="01", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_PRIMARY}="1"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="02", SUBSYSTEM=="tty", ENV{ID_MM_PORT_IGNORE}="1"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="04", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
+diff --git a/src/plugins/huawei/mm-broadband-modem-huawei.c b/src/plugins/huawei/mm-broadband-modem-huawei.c
+index cddde30..f711573 100644
+--- a/src/plugins/huawei/mm-broadband-modem-huawei.c
++++ b/src/plugins/huawei/mm-broadband-modem-huawei.c
+@@ -39,6 +39,7 @@
+ #include "mm-iface-modem.h"
+ #include "mm-iface-modem-3gpp.h"
+ #include "mm-iface-modem-3gpp-ussd.h"
++#include "mm-iface-modem-3gpp-profile-manager.h"
+ #include "mm-iface-modem-location.h"
+ #include "mm-iface-modem-time.h"
+ #include "mm-iface-modem-cdma.h"
+@@ -53,6 +54,7 @@
+ static void iface_modem_init           (MMIfaceModemInterface         *iface);
+ static void iface_modem_3gpp_init      (MMIfaceModem3gppInterface     *iface);
+ static void iface_modem_3gpp_ussd_init (MMIfaceModem3gppUssdInterface *iface);
++static void iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface);
+ static void iface_modem_location_init  (MMIfaceModemLocationInterface *iface);
+ static void iface_modem_cdma_init      (MMIfaceModemCdmaInterface     *iface);
+ static void iface_modem_time_init      (MMIfaceModemTimeInterface     *iface);
+@@ -61,6 +63,7 @@ static void iface_modem_signal_init    (MMIfaceModemSignalInterface   *iface);
+ 
+ static MMIfaceModemInterface         *iface_modem_parent;
+ static MMIfaceModem3gppInterface     *iface_modem_3gpp_parent;
++static MMIfaceModem3gppProfileManagerInterface *iface_modem_3gpp_profile_manager_parent;
+ static MMIfaceModemLocationInterface *iface_modem_location_parent;
+ static MMIfaceModemCdmaInterface     *iface_modem_cdma_parent;
+ static MMIfaceModemVoiceInterface    *iface_modem_voice_parent;
+@@ -69,6 +72,7 @@ G_DEFINE_TYPE_EXTENDED (MMBroadbandModemHuawei, mm_broadband_modem_huawei, MM_TY
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM, iface_modem_init)
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP, iface_modem_3gpp_init)
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP_USSD, iface_modem_3gpp_ussd_init)
++                        G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_3GPP_PROFILE_MANAGER, iface_modem_3gpp_profile_manager_init)
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_CDMA, iface_modem_cdma_init)
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_LOCATION, iface_modem_location_init)
+                         G_IMPLEMENT_INTERFACE (MM_TYPE_IFACE_MODEM_TIME, iface_modem_time_init)
+@@ -2680,6 +2684,89 @@ huawei_modem_create_bearer (MMIfaceModem *self,
+                              task);
+ }
+ 
++/*****************************************************************************/
++/* Firmware attach profile (3GPP profile manager interface)
++ *
++ * Some devices define their own context for the LTE attach, at a fixed
++ * profile id, and can't run a PPP session on it: on the ZOWEE E3372-325,
++ * IPCP never completes when dialing it right after the modem booted, while
++ * any context defined by the host works. Devices tagged with
++ * ID_MM_HUAWEI_ATTACH_PROFILE_ID hide that profile, so that the bearer
++ * always defines and dials its own context.
++ */
++
++static gint
++get_attach_profile_id (MMBroadbandModemHuawei *self)
++{
++    MMPortSerialAt *port;
++
++    port = mm_base_modem_peek_port_primary (MM_BASE_MODEM (self));
++    if (!port)
++        return 0;
++
++    return mm_kernel_device_get_global_property_as_int (mm_port_peek_kernel_device (MM_PORT (port)),
++                                                        "ID_MM_HUAWEI_ATTACH_PROFILE_ID");
++}
++
++static gboolean
++modem_3gpp_profile_manager_list_profiles_finish (MMIfaceModem3gppProfileManager  *self,
++                                                 GAsyncResult                    *res,
++                                                 GList                          **out_profiles,
++                                                 GError                         **error)
++{
++    GList *profiles = NULL;
++    GList *l;
++    gint   attach_profile_id;
++
++    if (!iface_modem_3gpp_profile_manager_parent->list_profiles_finish (self, res, &profiles, error))
++        return FALSE;
++
++    attach_profile_id = get_attach_profile_id (MM_BROADBAND_MODEM_HUAWEI (self));
++    if (attach_profile_id > 0) {
++        for (l = profiles; l; l = g_list_next (l)) {
++            if (mm_3gpp_profile_get_profile_id (MM_3GPP_PROFILE (l->data)) == attach_profile_id) {
++                mm_obj_dbg (self, "ignoring firmware attach profile '%d'", attach_profile_id);
++                g_object_unref (l->data);
++                profiles = g_list_delete_link (profiles, l);
++                break;
++            }
++        }
++    }
++
++    if (out_profiles)
++        *out_profiles = profiles;
++    else
++        g_list_free_full (profiles, g_object_unref);
++    return TRUE;
++}
++
++static gboolean
++modem_3gpp_profile_manager_check_format_finish (MMIfaceModem3gppProfileManager  *self,
++                                                GAsyncResult                    *res,
++                                                gboolean                        *new_id,
++                                                gint                            *min_profile_id,
++                                                gint                            *max_profile_id,
++                                                GEqualFunc                      *apn_cmp,
++                                                MM3gppProfileCmpFlags           *profile_cmp_flags,
++                                                GError                         **error)
++{
++    gint min = 0;
++
++    if (!iface_modem_3gpp_profile_manager_parent->check_format_finish (self, res, new_id, &min, max_profile_id,
++                                                                       apn_cmp, profile_cmp_flags, error))
++        return FALSE;
++
++    /* These devices report profile id 0 in +CGDCONT=?, but don't allow
++     * defining it. With the attach profile hidden, the profile manager would
++     * otherwise fall back to profile 0 when no other profile is defined. */
++    if (get_attach_profile_id (MM_BROADBAND_MODEM_HUAWEI (self)) > 0)
++        min = MAX (min, 1);
++
++    if (min_profile_id)
++        *min_profile_id = min;
++    return TRUE;
++}
++
+ /*****************************************************************************/
+ /* USSD encode/decode (3GPP-USSD interface)
+  *
+@@ -5125,6 +5212,15 @@ iface_modem_voice_init (MMIfaceModemVoiceInterface *iface)
+     iface->create_call = create_call;
+ }
+ 
++static void
++iface_modem_3gpp_profile_manager_init (MMIfaceModem3gppProfileManagerInterface *iface)
++{
++    iface_modem_3gpp_profile_manager_parent = g_type_interface_peek_parent (iface);
++
++    iface->list_profiles_finish = modem_3gpp_profile_manager_list_profiles_finish;
++    iface->check_format_finish = modem_3gpp_profile_manager_check_format_finish;
++}
++
+ static void
+ iface_modem_signal_init (MMIfaceModemSignalInterface *iface)
+ {

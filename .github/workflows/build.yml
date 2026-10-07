@@ -1,0 +1,117 @@
+name: Build ModemManager E3372 plugin
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    env:
+      # Raspberry Pi OS archive signing key, from raspberrypi-archive-keyring
+      # 2025.1+rpt1. The key file published on archive.raspberrypi.com only has
+      # SHA-1 binding signatures, which trixie's apt rejects.
+      RPI_KEY_FPR: CF8A1AF502A2AA2D763BAE7E82B129927FA3303E
+    steps:
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git gpg
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Add the Raspberry Pi OS archive
+        run: |
+          # Same package set as Raspberry Pi OS trixie: Debian plus archive.raspberrypi.com
+          gpg --show-keys --with-colons ci/raspberrypi-archive-keyring.pgp |
+            grep -q "^fpr:::::::::${RPI_KEY_FPR}:"
+          install -m 644 ci/raspberrypi-archive-keyring.pgp /usr/share/keyrings/
+          cat > /etc/apt/sources.list.d/raspi.sources <<EOF
+          Types: deb
+          URIs: http://archive.raspberrypi.com/debian/
+          Suites: trixie
+          Components: main
+          Signed-By: /usr/share/keyrings/raspberrypi-archive-keyring.pgp
+          EOF
+          apt-get update
+
+      - name: Install build dependencies
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential dpkg-dev git gettext \
+            meson ninja-build pkg-config patchelf python3 xsltproc \
+            libdbus-1-dev libglib2.0-dev libgudev-1.0-dev \
+            libmbim-glib-dev libqmi-glib-dev libqrtr-glib-dev \
+            libpolkit-gobject-1-dev libsystemd-dev systemd-dev \
+            modemmanager
+
+      - name: Build plugin
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            ./build.sh "$GITHUB_REF_NAME"
+          else
+            ./build.sh
+          fi
+
+      - name: Check symbols against Debian's modemmanager
+        run: ./check-symbols.sh
+
+      - name: Test-install the package
+        run: |
+          apt-get install -y ./dist/*.deb
+          dpkg -L modemmanager-e3372
+          # Debian's Huawei plugin and udev rules must be diverted, not overwritten
+          dpkg-divert --list modemmanager-e3372
+          test "$(dpkg-divert --list modemmanager-e3372 | wc -l)" -eq 2
+          test -e /usr/lib/aarch64-linux-gnu/ModemManager/libmm-plugin-huawei.so.distrib
+          test -e /usr/lib/udev/rules.d/77-mm-huawei-net-port-types.rules.distrib
+          apt-get remove -y modemmanager-e3372
+          test "$(dpkg-divert --list modemmanager-e3372 | wc -l)" -eq 0
+          test -e /usr/lib/aarch64-linux-gnu/ModemManager/libmm-plugin-huawei.so
+          apt-get install -y ./dist/*.deb
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: modemmanager-e3372-arm64
+          path: dist/*.deb
+
+      - name: Extract release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES_FILE="${RUNNER_TEMP}/release_notes.md"
+          if awk -v tag="$TAG" '
+            $0 ~ "^## \\[" tag "\\]" { found=1; print; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE" && [ -s "$NOTES_FILE" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG" > "$NOTES_FILE"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          prerelease: True
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: ${{ steps.notes.outputs.found == 'false' }}
+          files: dist/*.deb

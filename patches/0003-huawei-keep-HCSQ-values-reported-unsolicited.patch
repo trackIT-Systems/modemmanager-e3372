@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jonas=20H=C3=B6chst?= <hoechst@trackit.systems>
+Date: Wed, 7 Oct 2026 17:06:25 +0200
+Subject: [PATCH] huawei: keep ^HCSQ values reported unsolicited
+
+The extended signal values are loaded by querying ^HCSQ? after clearing
+the previous values, relying on the ^HCSQ handler to parse the response.
+The ZOWEE E3372-325 replies to ^HCSQ? with a bare OK and only reports
+^HCSQ unsolicited, so the values were always empty.
+
+Don't clear the values before the query. The ^HCSQ handler replaces them
+whenever a ^HCSQ message arrives, as response or unsolicited, so devices
+that answer the query behave as before.
+---
+ src/plugins/huawei/mm-broadband-modem-huawei.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/plugins/huawei/mm-broadband-modem-huawei.c b/src/plugins/huawei/mm-broadband-modem-huawei.c
+index f711573..09d08bf 100644
+--- a/src/plugins/huawei/mm-broadband-modem-huawei.c
++++ b/src/plugins/huawei/mm-broadband-modem-huawei.c
+@@ -4770,9 +4770,10 @@ signal_load_values (MMIfaceModemSignal *_self,
+ 
+     task = g_task_new (self, cancellable, callback, user_data);
+ 
+-    /* Clear any previous detailed signal values to get new ones */
+-    detailed_signal_clear (&self->priv->detailed_signal);
+-
++    /* Don't clear the previous detailed signal values: the ^HCSQ handler
++     * replaces them whenever a ^HCSQ message arrives, either as the response
++     * to this query or unsolicited. Some devices (e.g. the ZOWEE E3372-325)
++     * only send them unsolicited and reply to the query with a bare OK. */
+     mm_base_modem_at_command (MM_BASE_MODEM (self),
+                               "^HCSQ?",
+                               3,

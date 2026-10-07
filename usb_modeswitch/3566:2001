@@ -1,0 +1,10 @@
+# ZOWEE (Brovi) E3372-325, storage/CD-ROM mode -> modem mode
+#
+# The stick keeps its USB ID in all modes. In modem mode, interface 0 has
+# class ff (storage mode: 08), so TargetClass skips a stick that is already
+# switched. HuaweiAltMode sends the same message as usb_modeswitch -X; the
+# HuaweiNew message (-J) brings the stick into HiLink (RNDIS) mode instead.
+TargetVendor=0x3566
+TargetProduct=0x2001
+TargetClass=0xff
+HuaweiAltMode=1
