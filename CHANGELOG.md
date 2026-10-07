@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.24.0-1] - 2026-10-07
 
 First version, for Raspberry Pi OS trixie (arm64) with
 `modemmanager 1.24.0-1+deb13u1`.
