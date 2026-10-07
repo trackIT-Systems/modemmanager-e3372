@@ -15,6 +15,11 @@ PLUGINDIR=$TOP/build/stage/usr/lib/$MULTIARCH/ModemManager
 DAEMON=/usr/sbin/ModemManager
 LIBMM=$(ldd "$DAEMON" | awk '/libmm-glib\.so/ { print $3 }')
 
+if [ ! -e "$PLUGINDIR/libmm-plugin-huawei.so" ]; then
+    echo "error: $PLUGINDIR/libmm-plugin-huawei.so not found, run ./build.sh first" >&2
+    exit 1
+fi
+
 installed=$(dpkg-query -W -f='${Version}' modemmanager)
 if [ "$installed" != "$MM_DEBIAN_VERSION" ]; then
     echo "error: modemmanager $installed installed, expected $MM_DEBIAN_VERSION" >&2
