@@ -45,10 +45,24 @@ design (Marvell chipset, Huawei-compatible firmware), see
 
 > [!IMPORTANT]
 > **All Huawei sticks that start as `12d1:1f01` are switched to modem mode,**
-> not only the E3372h-320 and E3372h-153. The package's `/etc/usb_modeswitch.d/12d1:1f01`
-> overrides usb-modeswitch-data, which switches them to HiLink mode. To keep
-> another `12d1:1f01` stick in HiLink mode, delete that file (it's a conffile,
-> so upgrades won't bring it back).
+> not only the E3372h-320 and E3372h-153. The package's
+> `/etc/usb_modeswitch.d/12d1:1f01` overrides usb-modeswitch-data, which
+> switches them to HiLink mode. To keep another `12d1:1f01` stick in HiLink
+> mode, delete that file (it's a conffile, so upgrades won't bring it back).
+
+Other Huawei HiLink sticks reported to start as `12d1:1f01` (not tested with
+this package):
+
+| Model | Modem mode after the HuaweiAlt message |
+|---|---|
+| E8372 (LTE, Wi-Fi) | `12d1:155e`, [reported](https://forums.balena.io/t/howto-add-support-for-the-huawei-e8372-on-jetson-nano-builds/68087) |
+| E353, E303, E3131, E3531 (3G) | No reports found |
+
+Debian's Huawei plugin handles Huawei's vendor ID, so a stick that comes up in
+modem mode most likely works with ModemManager. A stick that doesn't accept the
+HuaweiAlt message may end up in neither mode; delete the file above to use it
+in HiLink mode. The E3372s-153 with "stick" firmware starts as `12d1:1505` and
+isn't affected.
 
 ## Installation
 
