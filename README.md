@@ -223,9 +223,11 @@ NetworkManager 1.52.1, kernel 6.18 (Raspberry Pi), SIM roaming on LTE.
 **Huawei E3372h-320** (firmware `10.0.3.1(H192SP1C983)`, hardware
 `CL4E3372HM`):
 
-* After a firmware reboot (HiLink API reboot, the stick comes back as
-  `12d1:1f01`), usb_modeswitch switches it to `12d1:155e`, the Huawei plugin
-  takes it (`^NDISDUP` on `wwan0`) and NetworkManager connects on its own.
+* Cold start with the package installed: the stick boots as `12d1:1f01`,
+  usb_modeswitch switches it to `12d1:155e`, the Huawei plugin takes it
+  (`^NDISDUP` on `wwan0`) and NetworkManager connects on its own. The modem was
+  created 41 s after a host reboot (data right after), and data flowed 63 s
+  after a firmware reboot of the stick (`AT^RESET`).
 * With data checked after each step: 3 of 3 NetworkManager disconnect/reconnect
   cycles (2–4 s each) and a ModemManager restart (data after about 40 s).
 * IPv4 and IPv4v6 bearers work; signal quality and extended LTE signal values
