@@ -8,6 +8,10 @@
   instead of in HiLink mode. The kernel and ModemManager's Huawei plugin
   already support it; data goes over NCM (`wwan0`). This applies to all Huawei
   sticks that start as `12d1:1f01`.
+- Huawei plugin: before dialing with `^NDISDUP`, disconnect a connection
+  that is still active in the modem (patch 0004). After ModemManager was
+  killed while connected, the E3372h-320 previously failed every dial attempt
+  until it was power cycled.
 - Ship all documents in `docs/` with the package.
 
 ## [1.24.0-1] - 2026-10-07

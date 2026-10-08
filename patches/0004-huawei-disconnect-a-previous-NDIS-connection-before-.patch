@@ -1,0 +1,188 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jonas=20H=C3=B6chst?= <hoechst@trackit.systems>
+Date: Thu, 8 Oct 2026 10:18:36 +0200
+Subject: [PATCH] huawei: disconnect a previous NDIS connection before dialing
+
+If an NDIS connection is still active in the modem when a bearer connects,
+e.g. after ModemManager was killed while connected, ^NDISDUP=1,1 fails with
+ERROR on every attempt. A clean ModemManager restart doesn't help either,
+as nothing disconnects the old session: the connection stays down until
+the modem is power cycled or someone sends ^NDISDUP=1,0 by hand.
+
+Check ^NDISSTATQRY? before dialing. If a connection is active, disconnect
+it with ^NDISDUP=1,0 and wait up to 10 seconds for it to go away before
+dialing. Errors in these extra steps aren't fatal; the dial attempt
+reports the outcome as before.
+
+Tested with a Huawei E3372h-320 (firmware 10.0.3.1): after killing
+ModemManager with SIGKILL while connected, the next ModemManager instance
+reconnected in about 40 s (3 of 3 attempts), where it previously failed
+until the stick was rebooted.
+---
+ .../huawei/mm-broadband-bearer-huawei.c       | 130 ++++++++++++++++++
+ 1 file changed, 130 insertions(+)
+
+diff --git a/src/plugins/huawei/mm-broadband-bearer-huawei.c b/src/plugins/huawei/mm-broadband-bearer-huawei.c
+index 19112af..b564e75 100644
+--- a/src/plugins/huawei/mm-broadband-bearer-huawei.c
++++ b/src/plugins/huawei/mm-broadband-bearer-huawei.c
+@@ -61,8 +61,13 @@ get_dial_port (MMBroadbandModemHuawei *modem,
+ /*****************************************************************************/
+ /* Connect 3GPP */
+ 
++/* Seconds to wait for a previous connection to go away before dialing */
++#define STALE_CONNECTION_CHECKS_MAX 10
++
+ typedef enum {
+     CONNECT_3GPP_CONTEXT_STEP_FIRST = 0,
++    CONNECT_3GPP_CONTEXT_STEP_CHECK_STALE,
++    CONNECT_3GPP_CONTEXT_STEP_DISCONNECT_STALE,
+     CONNECT_3GPP_CONTEXT_STEP_NDISDUP,
+     CONNECT_3GPP_CONTEXT_STEP_NDISSTATQRY,
+     CONNECT_3GPP_CONTEXT_STEP_IP_CONFIG,
+@@ -76,6 +81,8 @@ typedef struct {
+     Connect3gppContextStep step;
+     guint check_count;
+     guint failed_ndisstatqry_count;
++    guint stale_check_count;
++    gboolean stale_disconnect_sent;
+     MMBearerIpFamily ip_family;
+     MMBearerIpConfig *ipv4_config;
+     MMBearerIpConfig *ipv6_config;
+@@ -253,6 +260,104 @@ connect_ndisstatqry_check_ready (MMBaseModem *modem,
+                            g_object_ref (self));
+ }
+ 
++/* A connection may still be active in the modem although we don't know about
++ * it, e.g. after ModemManager was killed while connected. ^NDISDUP=1,1 then
++ * fails with ERROR on every attempt, so disconnect it first. */
++static void
++connect_stale_ndisstatqry_ready (MMBaseModem *modem,
++                                 GAsyncResult *res,
++                                 MMBroadbandBearerHuawei *self)
++{
++    GTask *task;
++    Connect3gppContext *ctx;
++    const gchar *response;
++    GError *error = NULL;
++    gboolean ipv4_available = FALSE;
++    gboolean ipv4_connected = FALSE;
++    gboolean ipv6_available = FALSE;
++    gboolean ipv6_connected = FALSE;
++
++    task = self->priv->connect_pending;
++    g_assert (task != NULL);
++
++    ctx = g_task_get_task_data (task);
++
++    /* Balance refcount */
++    g_object_unref (self);
++
++    response = mm_base_modem_at_command_full_finish (modem, res, &error);
++    if (!response ||
++        !mm_huawei_parse_ndisstatqry_response (response,
++                                               &ipv4_available,
++                                               &ipv4_connected,
++                                               &ipv6_available,
++                                               &ipv6_connected,
++                                               &error)) {
++        mm_obj_dbg (self, "couldn't check for a previous connection: %s", error->message);
++        g_error_free (error);
++        ctx->step = CONNECT_3GPP_CONTEXT_STEP_NDISDUP;
++        connect_3gpp_context_step (task);
++        return;
++    }
++
++    if (!(ipv4_available && ipv4_connected) && !(ipv6_available && ipv6_connected)) {
++        ctx->step = CONNECT_3GPP_CONTEXT_STEP_NDISDUP;
++        connect_3gpp_context_step (task);
++        return;
++    }
++
++    if (!ctx->stale_disconnect_sent) {
++        mm_obj_msg (self, "previous connection still active in the modem, disconnecting it");
++        ctx->step = CONNECT_3GPP_CONTEXT_STEP_DISCONNECT_STALE;
++        connect_3gpp_context_step (task);
++        return;
++    }
++
++    if (ctx->stale_check_count >= STALE_CONNECTION_CHECKS_MAX) {
++        mm_obj_warn (self, "previous connection still active in the modem, dialing anyway");
++        ctx->step = CONNECT_3GPP_CONTEXT_STEP_NDISDUP;
++        connect_3gpp_context_step (task);
++        return;
++    }
++
++    /* Check again in a second */
++    g_timeout_add_seconds (1,
++                           (GSourceFunc)connect_retry_ndisstatqry_check_cb,
++                           g_object_ref (self));
++}
++
++static void
++connect_stale_ndisdup_ready (MMBaseModem *modem,
++                             GAsyncResult *res,
++                             MMBroadbandBearerHuawei *self)
++{
++    GTask *task;
++    Connect3gppContext *ctx;
++    GError *error = NULL;
++
++    task = self->priv->connect_pending;
++    g_assert (task != NULL);
++
++    ctx = g_task_get_task_data (task);
++
++    /* Balance refcount */
++    g_object_unref (self);
++
++    /* Errors are not fatal, the next check tells whether it's gone */
++    if (!mm_base_modem_at_command_full_finish (modem, res, &error)) {
++        mm_obj_dbg (self, "couldn't disconnect previous connection: %s", error->message);
++        g_error_free (error);
++    }
++
++    ctx->stale_disconnect_sent = TRUE;
++    ctx->step = CONNECT_3GPP_CONTEXT_STEP_CHECK_STALE;
++
++    /* Give the modem a second before checking again */
++    g_timeout_add_seconds (1,
++                           (GSourceFunc)connect_retry_ndisstatqry_check_cb,
++                           g_object_ref (self));
++}
++
+ static void
+ connect_ndisdup_ready (MMBaseModem *modem,
+                        GAsyncResult *res,
+@@ -351,6 +456,31 @@ connect_3gpp_context_step (GTask *task)
+         ctx->step++;
+     } /* fall through */
+ 
++    case CONNECT_3GPP_CONTEXT_STEP_CHECK_STALE:
++        ctx->stale_check_count++;
++        mm_base_modem_at_command_full (ctx->modem,
++                                       MM_IFACE_PORT_AT (ctx->primary),
++                                       "^NDISSTATQRY?",
++                                       3,
++                                       FALSE,
++                                       FALSE,
++                                       NULL,
++                                       (GAsyncReadyCallback)connect_stale_ndisstatqry_ready,
++                                       g_object_ref (self));
++        return;
++
++    case CONNECT_3GPP_CONTEXT_STEP_DISCONNECT_STALE:
++        mm_base_modem_at_command_full (ctx->modem,
++                                       MM_IFACE_PORT_AT (ctx->primary),
++                                       "^NDISDUP=1,0",
++                                       MM_BASE_BEARER_DEFAULT_DISCONNECTION_TIMEOUT,
++                                       FALSE,
++                                       FALSE,
++                                       NULL,
++                                       (GAsyncReadyCallback)connect_stale_ndisdup_ready,
++                                       g_object_ref (self));
++        return;
++
+     case CONNECT_3GPP_CONTEXT_STEP_NDISDUP: {
+         const gchar         *apn;
+         const gchar         *user;

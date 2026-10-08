@@ -93,9 +93,9 @@ mmcli -m any --signal-get
 > **The package replaces ModemManager's Huawei plugin.** It diverts Debian's
 > `libmm-plugin-huawei.so` and `77-mm-huawei-net-port-types.rules`
 > (`dpkg-divert`, the originals are kept as `*.distrib`) and installs patched
-> builds of both. The patches only add support for the E3372-325 and keep the
-> behavior for Huawei devices otherwise unchanged (see [Background](#background)).
-> The E3372h-320 works with the patched plugin as with Debian's.
+> builds of both. The patches add support for the E3372-325 and make
+> reconnecting more robust for Huawei NDIS modems; other behavior stays
+> unchanged (see [Background](#background)).
 > Removing the package restores Debian's files.
 
 ### In image builds
@@ -189,10 +189,17 @@ Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
 | 0001 | Accept `3566:2001` in the Huawei plugin; udev rules for its port types, skip `^GETPORTMODE` (unsupported), ignore the NCM port |
 | 0002 | New udev tag `ID_MM_HUAWEI_ATTACH_PROFILE_ID`: hide the firmware's attach context from the profile list, so ModemManager defines and dials its own; raise the minimum profile id to 1 (the stick rejects cid 0) |
 | 0003 | Don't clear the extended signal values before querying `^HCSQ?`: the stick answers with a bare `OK` and only reports `^HCSQ` unsolicited |
+| 0004 | Before dialing with `^NDISDUP`, check `^NDISSTATQRY?` and disconnect a connection that is still active in the modem (e.g. after ModemManager was killed while connected). Without it, every dial attempt fails with `ERROR` until the modem is power cycled |
 
 0001 and 0002 only change behavior for devices tagged by the udev rules (the
 E3372-325). 0003 changes when Huawei devices drop old `^HCSQ` values: on the
-next `^HCSQ` message instead of before every query.
+next `^HCSQ` message instead of before every query. 0004 adds one
+`^NDISSTATQRY?` query to every NDIS connection attempt of Huawei modems (the
+E3372h-320, not the E3372-325, which uses PPP) and only acts if a connection
+is already active.
+
+The E3372h-320 doesn't need 0001–0003: it works with Debian's plugin as well
+(tested), but only patch 0004 lets it recover from a leftover connection.
 
 The patches are meant to go upstream to ModemManager. Once a ModemManager with
 them is shipped by Debian, the plugin part of this package is obsolete; the
@@ -232,6 +239,10 @@ NetworkManager 1.52.1, kernel 6.18 (Raspberry Pi), SIM roaming on LTE.
   cycles (2–4 s each) and a ModemManager restart (data after about 40 s).
 * IPv4 and IPv4v6 bearers work; signal quality and extended LTE signal values
   are reported.
+* Physical replug: 5 of 5, including a different USB port (on the other USB
+  controller); data about 42 s after plugging in each time.
+* ModemManager killed with SIGKILL while connected: 3 of 3 recovered, data
+  about 40 s after the restart (patch 0004; without it, never).
 
 Known issues:
 
