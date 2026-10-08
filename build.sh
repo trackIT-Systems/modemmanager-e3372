@@ -144,8 +144,8 @@ Section: net
 Priority: optional
 Homepage: $HOMEPAGE
 Description: ModemManager support for E3372 LTE sticks in modem mode
- Runs the ZOWEE (Brovi) E3372-325 (3566:2001) and the Huawei E3372h-320
- (12d1:1f01) in modem mode with ModemManager and NetworkManager instead of
+ Runs the ZOWEE (Brovi) E3372-325 (3566:2001) and the Huawei E3372h-320 and
+ E3372h-153 (12d1:1f01) in modem mode with ModemManager and NetworkManager instead of
  HiLink mode: switches them with usb_modeswitch, binds the option driver to
  the E3372-325's AT ports and replaces ModemManager's Huawei plugin with one
  that supports the E3372-325 (PPP data connection, signal values).

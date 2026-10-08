@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Huawei E3372h-153 (HiLink firmware) tested and documented
+  (`docs/E3372h-153.md`): the existing `12d1:1f01` configuration switches it
+  to modem mode, data goes over NCM (`wwan0`) like on the E3372h-320.
+
 ## [1.24.0-2] - 2026-10-08
 
 - Support the Huawei E3372h-320 in modem mode: a usb_modeswitch configuration

@@ -2,10 +2,10 @@
 
 ModemManager support for E3372 LTE sticks in **modem mode**, packaged for
 **Raspberry Pi OS**: the **ZOWEE (Brovi) E3372-325** and the **Huawei
-E3372h-320**. Instead of running as a HiLink router with its own NAT at
+E3372h-320 and E3372h-153**. Instead of running as a HiLink router with its own NAT at
 `192.168.8.1`, the stick is switched to modem mode and handled by ModemManager
 and NetworkManager. The host gets the carrier IP directly (`ppp0` on the
-E3372-325, `wwan0` on the E3372h-320), and ModemManager reports signal, cell
+E3372-325, `wwan0` on the Huawei sticks), and ModemManager reports signal, cell
 and operator information.
 
 The package contains:
@@ -14,8 +14,8 @@ The package contains:
 * a udev rule that binds the kernel's `option` driver to the E3372-325's AT ports,
 * ModemManager's Huawei plugin with patches for the E3372-325, and its udev rules.
 
-The E3372h-320 only needs the usb_modeswitch configuration; the kernel and
-ModemManager already support it in modem mode.
+The E3372h-320 and E3372h-153 only need the usb_modeswitch configuration;
+the kernel and ModemManager already support them in modem mode.
 
 ## Target system
 
@@ -31,22 +31,21 @@ The plugin uses ModemManager-internal symbols, so each release works with
 
 ## Supported devices
 
-| USB ID | Device | Status |
-|---|---|---|
 | USB ID (storage → modem mode) | Device | Status |
 |---|---|---|
 | `3566:2001` → `3566:2001` | ZOWEE E3372-325, sold as Brovi or Huawei E3372-325 | Supported, data over PPP |
 | `12d1:1f01` → `12d1:155e` | Huawei E3372h-320 | Supported, data over NCM (`wwan0`) |
-| `12d1:1f01` → ? | Huawei E3372h-153 (HiLink firmware) | Untested |
+| `12d1:1f01` → `12d1:155e` | Huawei E3372h-153 (HiLink firmware) | Supported, data over NCM (`wwan0`) |
 
 The E3372-325 shares the name with Huawei's E3372 sticks but is a different
 design (Marvell chipset, Huawei-compatible firmware), see
-[docs/E3372-325.md](docs/E3372-325.md). The E3372h-320 is a Huawei (HiSilicon)
-design, see [docs/E3372h-320.md](docs/E3372h-320.md).
+[docs/E3372-325.md](docs/E3372-325.md). The E3372h-320 and E3372h-153 are Huawei
+(HiSilicon) designs, see [docs/E3372h-320.md](docs/E3372h-320.md) and
+[docs/E3372h-153.md](docs/E3372h-153.md).
 
 > [!IMPORTANT]
 > **All Huawei sticks that start as `12d1:1f01` are switched to modem mode,**
-> not only the E3372h-320. The package's `/etc/usb_modeswitch.d/12d1:1f01`
+> not only the E3372h-320 and E3372h-153. The package's `/etc/usb_modeswitch.d/12d1:1f01`
 > overrides usb-modeswitch-data, which switches them to HiLink mode. To keep
 > another `12d1:1f01` stick in HiLink mode, delete that file (it's a conffile,
 > so upgrades won't bring it back).
@@ -79,10 +78,11 @@ negotiate IPv6:
 sudo nmcli connection add type gsm ifname '*' con-name cellular apn <your-apn> ipv6.method disabled
 ```
 
-The E3372h-320 also works with IPv6 enabled (IPv4v6 bearer).
+The E3372h-320 also works with IPv6 enabled (IPv4v6 bearer). The E3372h-153
+only supports IPv4.
 
 NetworkManager connects automatically and brings up `ppp0` (E3372-325) or
-`wwan0` (E3372h-320). Signal values:
+`wwan0` (E3372h-320, E3372h-153). Signal values:
 
 ```sh
 mmcli -m any --signal-setup=10
@@ -106,7 +106,7 @@ The package can be installed in a chroot, e.g. with
 package scripts only set up the diversions. Example for a pimod `Pifile`:
 
 ```sh
-MM_E3372_VERSION=1.24.0-1
+MM_E3372_VERSION=1.24.0-2
 RUN sh -c "curl -fsSL -o /tmp/modemmanager-e3372.deb https://github.com/trackIT-Systems/modemmanager-e3372/releases/download/${MM_E3372_VERSION}/modemmanager-e3372_${MM_E3372_VERSION}_arm64.deb"
 RUN apt-get install -y /tmp/modemmanager-e3372.deb
 RUN rm /tmp/modemmanager-e3372.deb
@@ -133,7 +133,7 @@ Wait for a release of this repository for the new version, or build one (see
 
 ## Hardware notes
 
-Both sticks start in storage (CD-ROM) mode after every power-on and are
+All sticks start in storage (CD-ROM) mode after every power-on and are
 switched to modem mode each time by the package's usb_modeswitch
 configuration; nothing is stored in the sticks.
 
@@ -153,21 +153,26 @@ configuration; nothing is stored in the sticks.
 * **Data:** ModemManager dials with `^NDISDUP` and configures `wwan0` with the
   address the stick reports (static IPv4, no DHCP client needed).
 
+**E3372h-153:** same USB IDs, ports and data connection as the E3372h-320,
+except that all serial interfaces are `ff/ff/ff` and ModemManager takes the
+port types from `^GETPORTMODE`.
+
 **Back to HiLink:** `apt purge modemmanager-e3372` (a plain `remove` keeps the
 usb_modeswitch configurations, which would keep switching the sticks to modem
 mode), then re-plug. The E3372-325 has to be switched back by hand with
-`usb_modeswitch -v 3566 -p 2001 -J`; for the E3372h-320, usb-modeswitch-data
+`usb_modeswitch -v 3566 -p 2001 -J`; for the Huawei sticks, usb-modeswitch-data
 does that on its own.
 
 Firmware details are in [docs/E3372-325.md](docs/E3372-325.md) (USB modes, the
-attach context, supported AT commands, how to test a change) and
-[docs/E3372h-320.md](docs/E3372h-320.md).
+attach context, supported AT commands, how to test a change),
+[docs/E3372h-320.md](docs/E3372h-320.md) and
+[docs/E3372h-153.md](docs/E3372h-153.md).
 
 ## Background
 
-Stock Raspberry Pi OS switches the E3372h-320 to HiLink mode: the
+Stock Raspberry Pi OS switches the E3372h-320 and E3372h-153 to HiLink mode: the
 `12d1:1f01` entry in usb-modeswitch-data sends the HuaweiNew message. With the
-HuaweiAlt message instead, the stick comes up in modem mode, which the kernel
+HuaweiAlt message instead, the sticks come up in modem mode, which the kernel
 (`option`, `cdc_ncm`) and ModemManager's Huawei plugin already support.
 
 Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
@@ -195,11 +200,12 @@ Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
 E3372-325). 0003 changes when Huawei devices drop old `^HCSQ` values: on the
 next `^HCSQ` message instead of before every query. 0004 adds one
 `^NDISSTATQRY?` query to every NDIS connection attempt of Huawei modems (the
-E3372h-320, not the E3372-325, which uses PPP) and only acts if a connection
+E3372h-320 and E3372h-153, not the E3372-325, which uses PPP) and only acts if a connection
 is already active.
 
-The E3372h-320 doesn't need 0001–0003: it works with Debian's plugin as well
-(tested), but only patch 0004 lets it recover from a leftover connection.
+The E3372h-320 and E3372h-153 don't need 0001–0003: they work with Debian's
+plugin as well (tested), but only patch 0004 lets them recover from a leftover
+connection.
 
 The patches are meant to go upstream to ModemManager. Once a ModemManager with
 them is shipped by Debian, the plugin part of this package is obsolete; the
@@ -244,6 +250,23 @@ NetworkManager 1.52.1, kernel 6.18 (Raspberry Pi), SIM roaming on LTE.
 * ModemManager killed with SIGKILL while connected: 3 of 3 recovered, data
   about 40 s after the restart (patch 0004; without it, never).
 
+**Huawei E3372h-153** (HiLink firmware `22.329.63.00.21`, hardware
+`CL2E3372HM`):
+
+* Cold start with the package installed: switched to `12d1:155e`, the Huawei
+  plugin takes it (`^NDISDUP` on `wwan0`) and NetworkManager connects on its
+  own. Data 46 s after a host reboot (kernel start) and about 50 s after a
+  firmware reboot of the stick (`AT^RESET`).
+* With data checked after each step: 3 of 3 NetworkManager disconnect/reconnect
+  cycles (about 1 s each), a ModemManager restart (data after 36 s) and an
+  inhibit/uninhibit (data after 29 s).
+* ModemManager killed with SIGKILL while connected: 3 of 3 recovered, data
+  36–38 s after the restart (patch 0004).
+* IPv4 bearer; signal quality and extended LTE signal values are reported.
+  About 3 Mbit/s down and up (LTE, roaming, single sample).
+* Physical replug: 5 of 5, alternating between both USB controllers (`1-2`,
+  `3-2`); modem mode 1.3 s and data 38–40 s after plugging in each time.
+
 Known issues:
 
 * The attach context's cid (7) is hard-coded in the udev rules; only tested with
@@ -272,12 +295,13 @@ apt-get install --no-install-recommends \
 `dist/modemmanager-e3372_<version>_arm64.deb` with:
 
 ```
+etc/usb_modeswitch.d/12d1:1f01
 etc/usb_modeswitch.d/3566:2001
 usr/lib/aarch64-linux-gnu/ModemManager/libmm-plugin-huawei.so   (diverts Debian's)
 usr/lib/udev/rules.d/40-e3372-usb_modeswitch.rules
 usr/lib/udev/rules.d/70-e3372-option.rules
 usr/lib/udev/rules.d/77-mm-huawei-net-port-types.rules           (diverts Debian's)
-usr/share/doc/modemmanager-e3372/{README.md,E3372-325.md,copyright,changelog.Debian.gz}
+usr/share/doc/modemmanager-e3372/{README.md,E3372*.md,copyright,changelog.Debian.gz}
 ```
 
 It refuses to run if `build/` exists; remove it for a fresh build.
