@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.24.0-2] - 2026-10-08
 
 - Support the Huawei E3372h-320 in modem mode: a usb_modeswitch configuration
   for `12d1:1f01` sends the HuaweiAlt message instead of usb-modeswitch-data's
