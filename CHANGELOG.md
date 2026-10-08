@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+- Support the Huawei E3372h-320 in modem mode: a usb_modeswitch configuration
+  for `12d1:1f01` sends the HuaweiAlt message instead of usb-modeswitch-data's
+  HuaweiNew message, so the stick comes up as `12d1:155e` (AT ports and NCM)
+  instead of in HiLink mode. The kernel and ModemManager's Huawei plugin
+  already support it; data goes over NCM (`wwan0`). This applies to all Huawei
+  sticks that start as `12d1:1f01`.
+- Ship all documents in `docs/` with the package.
+
 ## [1.24.0-1] - 2026-10-07
 
 First version, for Raspberry Pi OS trixie (arm64) with

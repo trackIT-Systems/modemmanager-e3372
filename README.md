@@ -1,17 +1,21 @@
 # modemmanager-e3372
 
 ModemManager support for E3372 LTE sticks in **modem mode**, packaged for
-**Raspberry Pi OS**. Currently the **ZOWEE (Brovi) E3372-325**: instead of
-running as a HiLink router with its own NAT at `192.168.8.1`, the stick is
-switched to modem mode and handled by ModemManager and NetworkManager. The
-host gets the carrier IP directly on `ppp0`, and ModemManager reports signal,
-cell and operator information.
+**Raspberry Pi OS**: the **ZOWEE (Brovi) E3372-325** and the **Huawei
+E3372h-320**. Instead of running as a HiLink router with its own NAT at
+`192.168.8.1`, the stick is switched to modem mode and handled by ModemManager
+and NetworkManager. The host gets the carrier IP directly (`ppp0` on the
+E3372-325, `wwan0` on the E3372h-320), and ModemManager reports signal, cell
+and operator information.
 
 The package contains:
 
-* a usb_modeswitch configuration that switches the stick to modem mode,
-* a udev rule that binds the kernel's `option` driver to its AT ports,
-* ModemManager's Huawei plugin with patches for the stick, and its udev rules.
+* usb_modeswitch configurations that switch the sticks to modem mode,
+* a udev rule that binds the kernel's `option` driver to the E3372-325's AT ports,
+* ModemManager's Huawei plugin with patches for the E3372-325, and its udev rules.
+
+The E3372h-320 only needs the usb_modeswitch configuration; the kernel and
+ModemManager already support it in modem mode.
 
 ## Target system
 
@@ -29,13 +33,23 @@ The plugin uses ModemManager-internal symbols, so each release works with
 
 | USB ID | Device | Status |
 |---|---|---|
-| `3566:2001` | ZOWEE E3372-325, sold as Brovi or Huawei E3372-325 | Supported, data over PPP |
-| `12d1:14db` | Huawei E3372h-320 | Planned (NCM via `^NDISDUP`) |
-| `12d1:14dc` | Huawei E3372h-153 | Planned |
+| USB ID (storage → modem mode) | Device | Status |
+|---|---|---|
+| `3566:2001` → `3566:2001` | ZOWEE E3372-325, sold as Brovi or Huawei E3372-325 | Supported, data over PPP |
+| `12d1:1f01` → `12d1:155e` | Huawei E3372h-320 | Supported, data over NCM (`wwan0`) |
+| `12d1:1f01` → ? | Huawei E3372h-153 (HiLink firmware) | Untested |
 
 The E3372-325 shares the name with Huawei's E3372 sticks but is a different
 design (Marvell chipset, Huawei-compatible firmware), see
-[docs/E3372-325.md](docs/E3372-325.md).
+[docs/E3372-325.md](docs/E3372-325.md). The E3372h-320 is a Huawei (HiSilicon)
+design, see [docs/E3372h-320.md](docs/E3372h-320.md).
+
+> [!IMPORTANT]
+> **All Huawei sticks that start as `12d1:1f01` are switched to modem mode,**
+> not only the E3372h-320. The package's `/etc/usb_modeswitch.d/12d1:1f01`
+> overrides usb-modeswitch-data, which switches them to HiLink mode. To keep
+> another `12d1:1f01` stick in HiLink mode, delete that file (it's a conffile,
+> so upgrades won't bring it back).
 
 ## Installation
 
@@ -53,18 +67,22 @@ The package reloads the udev rules and restarts ModemManager. Re-plug the stick
 Check that ModemManager handles the stick:
 
 ```sh
-mmcli -L                      # [ZOWEE TECHNOLOGY (HEYUAN) CO., LTD.] E3372-325
+mmcli -L                      # e.g. [ZOWEE TECHNOLOGY (HEYUAN) CO., LTD.] E3372-325
 mmcli -m any | grep plugin    # plugin: huawei
 ```
 
-Then create a NetworkManager connection with your SIM's APN. **IPv6 must be
-disabled**, the stick ends PPP sessions that negotiate IPv6:
+Then create a NetworkManager connection with your SIM's APN. On the
+**E3372-325, IPv6 must be disabled**, the stick ends PPP sessions that
+negotiate IPv6:
 
 ```sh
 sudo nmcli connection add type gsm ifname '*' con-name cellular apn <your-apn> ipv6.method disabled
 ```
 
-NetworkManager connects automatically and brings up `ppp0`. Signal values:
+The E3372h-320 also works with IPv6 enabled (IPv4v6 bearer).
+
+NetworkManager connects automatically and brings up `ppp0` (E3372-325) or
+`wwan0` (E3372h-320). Signal values:
 
 ```sh
 mmcli -m any --signal-setup=10
@@ -77,6 +95,7 @@ mmcli -m any --signal-get
 > (`dpkg-divert`, the originals are kept as `*.distrib`) and installs patched
 > builds of both. The patches only add support for the E3372-325 and keep the
 > behavior for Huawei devices otherwise unchanged (see [Background](#background)).
+> The E3372h-320 works with the patched plugin as with Debian's.
 > Removing the package restores Debian's files.
 
 ### In image builds
@@ -114,23 +133,42 @@ Wait for a release of this repository for the new version, or build one (see
 
 ## Hardware notes
 
+Both sticks start in storage (CD-ROM) mode after every power-on and are
+switched to modem mode each time by the package's usb_modeswitch
+configuration; nothing is stored in the sticks.
+
+**E3372-325:**
+
 * **Port layout** in modem mode: interface 1 AT and PPP (primary), interface 2
   Marvell diagnostics (ignored), interface 4 AT (secondary), interfaces 5/6 NCM
   (ignored, it never gets a link).
-* **Modes:** the stick starts in storage (CD-ROM) mode after every power-on.
-  The package's usb_modeswitch configuration (`/etc/usb_modeswitch.d/3566:2001`)
-  switches it to modem mode each time; nothing is stored in the stick.
 * **Throughput** (LTE, roaming, single samples): about 6 Mbit/s down, 1 Mbit/s
   up, 80–90 ms ping. PPP framing costs no measurable CPU on a Pi 5.
-* **Back to HiLink:** `apt purge modemmanager-e3372` (a plain `remove` keeps
-  the usb_modeswitch configuration, which would keep switching the stick to
-  modem mode), re-plug, and switch the stick with
-  `usb_modeswitch -v 3566 -p 2001 -J`.
 
-Firmware details (USB modes, the attach context, supported AT commands, how to
-test a change) are in [docs/E3372-325.md](docs/E3372-325.md).
+**E3372h-320:**
+
+* **Port layout** in modem mode (`12d1:155e`): interface 0 AT/PPP, interface 1
+  diagnostics (not used), interface 2 AT (primary), interfaces 3/4 NCM
+  (`wwan0`, used for data). The kernel binds `option` and `cdc_ncm` by itself.
+* **Data:** ModemManager dials with `^NDISDUP` and configures `wwan0` with the
+  address the stick reports (static IPv4, no DHCP client needed).
+
+**Back to HiLink:** `apt purge modemmanager-e3372` (a plain `remove` keeps the
+usb_modeswitch configurations, which would keep switching the sticks to modem
+mode), then re-plug. The E3372-325 has to be switched back by hand with
+`usb_modeswitch -v 3566 -p 2001 -J`; for the E3372h-320, usb-modeswitch-data
+does that on its own.
+
+Firmware details are in [docs/E3372-325.md](docs/E3372-325.md) (USB modes, the
+attach context, supported AT commands, how to test a change) and
+[docs/E3372h-320.md](docs/E3372h-320.md).
 
 ## Background
+
+Stock Raspberry Pi OS switches the E3372h-320 to HiLink mode: the
+`12d1:1f01` entry in usb-modeswitch-data sends the HuaweiNew message. With the
+HuaweiAlt message instead, the stick comes up in modem mode, which the kernel
+(`option`, `cdc_ncm`) and ModemManager's Huawei plugin already support.
 
 Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
 
@@ -165,9 +203,10 @@ Debian's `1.24.0-1+deb13u1` only patches the Fibocom plugin, so upstream
 
 ## Status
 
-Tested on a ZOWEE E3372-325 (firmware `3.0.2.61(H057SP5C983)`) on a Raspberry
-Pi 5 with `modemmanager 1.24.0-1+deb13u1`, NetworkManager 1.52.1, kernel
-6.18 (Raspberry Pi), SIM roaming on LTE:
+Tested on a Raspberry Pi 5 with `modemmanager 1.24.0-1+deb13u1`,
+NetworkManager 1.52.1, kernel 6.18 (Raspberry Pi), SIM roaming on LTE.
+
+**ZOWEE E3372-325** (firmware `3.0.2.61(H057SP5C983)`):
 
 * Cold start with the package installed: the stick boots in storage mode,
   usb_modeswitch switches it, `option` binds the AT ports, the Huawei plugin
@@ -180,6 +219,17 @@ Pi 5 with `modemmanager 1.24.0-1+deb13u1`, NetworkManager 1.52.1, kernel
   contexts.
 * Signal quality, access technology, operator and extended LTE signal values
   (RSSI, RSRP, RSRQ, SNR) are reported.
+
+**Huawei E3372h-320** (firmware `10.0.3.1(H192SP1C983)`, hardware
+`CL4E3372HM`):
+
+* After a firmware reboot (HiLink API reboot, the stick comes back as
+  `12d1:1f01`), usb_modeswitch switches it to `12d1:155e`, the Huawei plugin
+  takes it (`^NDISDUP` on `wwan0`) and NetworkManager connects on its own.
+* With data checked after each step: 3 of 3 NetworkManager disconnect/reconnect
+  cycles (2–4 s each) and a ModemManager restart (data after about 40 s).
+* IPv4 and IPv4v6 bearers work; signal quality and extended LTE signal values
+  are reported.
 
 Known issues:
 

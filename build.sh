@@ -86,7 +86,7 @@ install -m 644 "$TOP"/udev/*.rules "$UDEVDIR/"
 install -m 644 "$TOP"/usb_modeswitch/* "$MODESWITCHDIR/"
 
 # Documentation, as required by Debian policy
-install -m 644 "$TOP/README.md" "$TOP/docs/E3372-325.md" "$DOCDIR/"
+install -m 644 "$TOP/README.md" "$TOP"/docs/*.md "$DOCDIR/"
 cat > "$DOCDIR/copyright" <<EOF
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: ModemManager
@@ -143,11 +143,14 @@ Depends: $DEPENDS
 Section: net
 Priority: optional
 Homepage: $HOMEPAGE
-Description: ModemManager support for the ZOWEE (Brovi) E3372-325 LTE stick
- Runs the E3372-325 (3566:2001) in modem mode with ModemManager and
- NetworkManager instead of HiLink mode: switches it with usb_modeswitch, binds
- the option driver to its AT ports and replaces ModemManager's Huawei plugin
- with one that supports the stick (PPP data connection, signal values).
+Description: ModemManager support for E3372 LTE sticks in modem mode
+ Runs the ZOWEE (Brovi) E3372-325 (3566:2001) and the Huawei E3372h-320
+ (12d1:1f01) in modem mode with ModemManager and NetworkManager instead of
+ HiLink mode: switches them with usb_modeswitch, binds the option driver to
+ the E3372-325's AT ports and replaces ModemManager's Huawei plugin with one
+ that supports the E3372-325 (PPP data connection, signal values).
+ .
+ All Huawei sticks that start as 12d1:1f01 are switched to modem mode.
  .
  The Huawei plugin and its udev rules are built from ModemManager $MM_TAG with
  patches for the stick and replace Debian's files via dpkg-divert. Built

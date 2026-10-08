@@ -1,0 +1,11 @@
+# Huawei E3372h-320 and other sticks that start as 12d1:1f01: modem mode
+# instead of HiLink.
+#
+# Overrides usb-modeswitch-data's 12d1:1f01, which sends the HuaweiNew message
+# (usb_modeswitch -J) and brings the stick into HiLink mode (14db/14dc, a
+# router with NAT at 192.168.8.1). HuaweiAltMode sends the same message as
+# usb_modeswitch -X; the E3372h-320 then comes up as 12d1:155e with AT ports
+# (option) and an NCM network interface (cdc_ncm).
+TargetVendor=0x12d1
+TargetProductList="14db,14dc,155e"
+HuaweiAltMode=1
