@@ -5,6 +5,12 @@
 - Huawei E3372h-153 (HiLink firmware) tested and documented
   (`docs/E3372h-153.md`): the existing `12d1:1f01` configuration switches it
   to modem mode, data goes over NCM (`wwan0`) like on the E3372h-320.
+- Huawei plugin: parse the replies on the E3372-325's second AT port
+  (interface 4), which come without the leading `<CR><LF>` (patch 0005, new
+  udev tag `ID_MM_HUAWEI_NO_LEADING_CRLF`). ModemManager used to drop them as
+  echo, so while connected it logged `checking if connected failed: PDP
+  context not found in the known contexts list` every 5 s, read the signal
+  quality as 0 % and timed out on errors from that port.
 
 ## [1.24.0-2] - 2026-10-08
 

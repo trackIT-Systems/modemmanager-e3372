@@ -200,6 +200,11 @@ Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
   (cid 7). ModemManager reuses it because the APN matches, but PPP on that
   context never gets through IPCP; NetworkManager retries and gives up. Any
   context the host defines works.
+* The second AT port (interface 4), which ModemManager uses while PPP holds
+  interface 1, replies without the leading `<CR><LF>`. ModemManager drops
+  every such reply as echo: the connection check logs `checking if connected
+  failed: PDP context not found in the known contexts list` every 5 s, and
+  `+CSQ` reads as 0 %.
 
 `patches/` applies to ModemManager `1.24.0` and only touches the Huawei plugin:
 
@@ -209,9 +214,10 @@ Stock Raspberry Pi OS can't run the E3372-325 in modem mode:
 | 0002 | New udev tag `ID_MM_HUAWEI_ATTACH_PROFILE_ID`: hide the firmware's attach context from the profile list, so ModemManager defines and dials its own; raise the minimum profile id to 1 (the stick rejects cid 0) |
 | 0003 | Don't clear the extended signal values before querying `^HCSQ?`: the stick answers with a bare `OK` and only reports `^HCSQ` unsolicited |
 | 0004 | Before dialing with `^NDISDUP`, check `^NDISSTATQRY?` and disconnect a connection that is still active in the modem (e.g. after ModemManager was killed while connected). Without it, every dial attempt fails with `ERROR` until the modem is power cycled |
+| 0005 | New udev tag `ID_MM_HUAWEI_NO_LEADING_CRLF` for interface 4 of `3566:2001`: disable echo removal on the port and add the missing `<CR><LF>` before the generic response parser |
 
-0001 and 0002 only change behavior for devices tagged by the udev rules (the
-E3372-325). 0003 changes when Huawei devices drop old `^HCSQ` values: on the
+0001, 0002 and 0005 only change behavior for devices tagged by the udev rules
+(the E3372-325). 0003 changes when Huawei devices drop old `^HCSQ` values: on the
 next `^HCSQ` message instead of before every query. 0004 adds one
 `^NDISSTATQRY?` query to every NDIS connection attempt of Huawei modems (the
 E3372h-320 and E3372h-153, not the E3372-325, which uses PPP) and only acts if a connection
@@ -246,6 +252,11 @@ NetworkManager 1.52.1, kernel 6.18 (Raspberry Pi), SIM roaming on LTE.
   contexts.
 * Signal quality, access technology, operator and extended LTE signal values
   (RSSI, RSRP, RSRQ, SNR) are reported.
+* Patch 0005, tested on a Raspberry Pi 4: the bearer's connection check reads
+  `+CGACT: 1,1` on interface 4 and reports connected (before: the "PDP context
+  not found" warning every 5 s), `+CSQ` gives the real signal quality, and
+  errors on the port no longer time out. Data checked after a ModemManager
+  restart and a NetworkManager disconnect/reconnect.
 
 **Huawei E3372h-320** (firmware `10.0.3.1(H192SP1C983)`, hardware
 `CL4E3372HM`):

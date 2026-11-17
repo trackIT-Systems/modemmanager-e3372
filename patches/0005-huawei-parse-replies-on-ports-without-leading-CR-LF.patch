@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jonas=20H=C3=B6chst?= <hoechst@trackit.systems>
+Date: Tue, 17 Nov 2026 12:04:29 +0100
+Subject: [PATCH] huawei: parse replies on ports without leading <CR><LF>
+
+The second AT port of the ZOWEE (Brovi) E3372-325 (interface 4) sends
+responses without the leading <CR><LF>:
+
+  +CGACT: 1,1<CR><LF>OK<CR><LF>
+  +CME ERROR: 100<CR><LF>
+
+ATV1 doesn't change that; interface 1 replies normally. The built-in
+echo removal takes everything before the first <CR><LF> for echo, so
+every information response on the port arrived empty. While PPP holds
+interface 1, the bearer's connection check runs +CGACT? there, finds no
+context and logs "checking if connected failed: PDP context not found in
+the known contexts list" every 5 seconds; +CSQ and ^SYSINFOEX are lost
+the same way. Errors don't match the generic parser without the
+<CR><LF> and time out.
+
+Ports tagged with ID_MM_HUAWEI_NO_LEADING_CRLF get echo removal
+disabled and a response parser that adds the <CR><LF> before running
+the generic parser. Tag interface 4 of the E3372-325.
+---
+ .../huawei/77-mm-huawei-net-port-types.rules  |  2 +
+ .../huawei/mm-broadband-modem-huawei.c        | 69 +++++++++++++++++++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/src/plugins/huawei/77-mm-huawei-net-port-types.rules b/src/plugins/huawei/77-mm-huawei-net-port-types.rules
+index ae0ab40..5702d7d 100644
+--- a/src/plugins/huawei/77-mm-huawei-net-port-types.rules
++++ b/src/plugins/huawei/77-mm-huawei-net-port-types.rules
+@@ -45,6 +45,8 @@ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{ID_MM_HUAWEI_ATTACH_PROFI
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="01", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_PRIMARY}="1"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="02", SUBSYSTEM=="tty", ENV{ID_MM_PORT_IGNORE}="1"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="04", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
++# if4 replies without the leading <CR><LF> ("+CGACT: 1,1<CR><LF>OK<CR><LF>")
++ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="04", SUBSYSTEM=="tty", ENV{ID_MM_HUAWEI_NO_LEADING_CRLF}="1"
+ ATTRS{idVendor}=="3566", ATTRS{idProduct}=="2001", ENV{.MM_USBIFNUM}=="05", SUBSYSTEM=="net", ENV{ID_MM_PORT_IGNORE}="1"
+ 
+ LABEL="mm_huawei_port_types_end"
+diff --git a/src/plugins/huawei/mm-broadband-modem-huawei.c b/src/plugins/huawei/mm-broadband-modem-huawei.c
+index 09d08bf..2a8e2d7 100644
+--- a/src/plugins/huawei/mm-broadband-modem-huawei.c
++++ b/src/plugins/huawei/mm-broadband-modem-huawei.c
+@@ -36,6 +36,7 @@
+ #include "mm-modem-helpers.h"
+ #include "mm-modem-helpers-huawei.h"
+ #include "mm-base-modem-at.h"
++#include "mm-serial-parsers.h"
+ #include "mm-iface-modem.h"
+ #include "mm-iface-modem-3gpp.h"
+ #include "mm-iface-modem-3gpp-ussd.h"
+@@ -4881,6 +4882,71 @@ set_ignored_unsolicited_events_handlers (MMBroadbandModemHuawei *self)
+     g_list_free_full (ports, g_object_unref);
+ }
+ 
++/*****************************************************************************/
++/* Ports replying without leading <CR><LF> */
++
++/* Some ports (interface 4 of the ZOWEE E3372-325) send responses without the
++ * leading <CR><LF>:
++ *
++ *   +CGACT: 1,1<CR><LF>OK<CR><LF>
++ *   +CME ERROR: 100<CR><LF>
++ *
++ * The built-in echo removal takes everything before the first <CR><LF> for
++ * echo and drops the information response, and the generic parser doesn't
++ * match errors without it, so they time out. On ports tagged with
++ * ID_MM_HUAWEI_NO_LEADING_CRLF, echo removal is disabled and the <CR><LF> is
++ * added before the generic parser runs. */
++
++static gboolean
++no_leading_crlf_parse (gpointer   parser,
++                       GString   *response,
++                       gpointer   log_object,
++                       GError   **error)
++{
++    /* Echo, in case echo is still enabled */
++    if (g_ascii_strncasecmp (response->str, "AT", 2) == 0) {
++        gsize len;
++
++        len = strcspn (response->str, "\r\n");
++        if (len == response->len)
++            return FALSE;
++        len += strspn (response->str + len, "\r\n");
++        g_string_erase (response, 0, len);
++    }
++
++    if (!g_str_has_prefix (response->str, "\r\n"))
++        g_string_prepend (response, "\r\n");
++
++    return mm_serial_parser_v1_parse (parser, response, log_object, error);
++}
++
++static void
++set_no_leading_crlf_parsers (MMBroadbandModemHuawei *self)
++{
++    GList *ports, *l;
++
++    ports = mm_broadband_modem_huawei_get_at_port_list (self);
++
++    for (l = ports; l; l = g_list_next (l)) {
++        MMPortSerialAt *port = MM_PORT_SERIAL_AT (l->data);
++
++        if (!mm_kernel_device_get_property_as_boolean (mm_port_peek_kernel_device (MM_PORT (port)),
++                                                       "ID_MM_HUAWEI_NO_LEADING_CRLF"))
++            continue;
++
++        mm_obj_dbg (self, "(%s) port replies without leading <CR><LF>", mm_port_get_device (MM_PORT (port)));
++        g_object_set (port,
++                      MM_PORT_SERIAL_AT_REMOVE_ECHO, FALSE,
++                      NULL);
++        mm_port_serial_at_set_response_parser (port,
++                                               no_leading_crlf_parse,
++                                               mm_serial_parser_v1_new (),
++                                               mm_serial_parser_v1_destroy);
++    }
++
++    g_list_free_full (ports, g_object_unref);
++}
++
+ static void
+ gps_trace_received (MMPortSerialGps *port,
+                     const gchar *trace,
+@@ -4897,6 +4963,9 @@ setup_ports (MMBroadbandModem *self)
+     /* Call parent's setup ports first always */
+     MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_huawei_parent_class)->setup_ports (self);
+ 
++    /* Response parsing for ports without leading <CR><LF> */
++    set_no_leading_crlf_parsers (MM_BROADBAND_MODEM_HUAWEI (self));
++
+     /* Unsolicited messages to always ignore */
+     set_ignored_unsolicited_events_handlers (MM_BROADBAND_MODEM_HUAWEI (self));
+ 
