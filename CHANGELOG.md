@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.24.0-3] - 2026-11-17
 
 - Huawei E3372h-153 (HiLink firmware) tested and documented
   (`docs/E3372h-153.md`): the existing `12d1:1f01` configuration switches it
